@@ -13,6 +13,10 @@ export default defineConfig({
     },
   },
   server: {
+    host: "0.0.0.0",
+    allowedHosts: [
+      'lymneu.dpdns.org'
+    ],
     proxy: {
       // Proxy API requests to the backend server
       "/api": {
