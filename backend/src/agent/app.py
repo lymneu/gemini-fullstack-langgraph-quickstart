@@ -1,55 +1,45 @@
-# mypy: disable - error - code = "no-untyped-def,misc"
 import pathlib
 from fastapi import FastAPI, Request, Response
-from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 import fastapi.exceptions
+from starlette.staticfiles import StaticFiles
+import sys
+import os
+
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Import the new router
+from api.auth_router import router as auth_router
 
 # Define the FastAPI app
-app = FastAPI()
-# 添加 CORS 中间件
+app = FastAPI(title="Gemini Fullstack with Auth")
+
+# Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # 在生产环境中，应该指定具体的域名
+    allow_origins=["*"],  # TODO: In production, change "*" to your frontend's domain
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-def create_frontend_router(build_dir="../frontend/dist"):
-    """Creates a router to serve the React frontend.
+# Include API routers
+app.include_router(auth_router, prefix="/auth", tags=["Authentication"])
 
-    Args:
-        build_dir: Path to the React build directory relative to this file.
+# --- Your Frontend Serving Logic (No changes needed here) ---
 
-    Returns:
-        A Starlette application serving the frontend.
-    """
+def create_frontend_router(build_dir="../../frontend/dist"):
     build_path = pathlib.Path(__file__).parent.parent.parent / build_dir
-    static_files_path = build_path / "assets"  # Vite uses 'assets' subdir
+    static_files_path = build_path / "assets"
 
     if not build_path.is_dir() or not (build_path / "index.html").is_file():
-        print(
-            f"WARN: Frontend build directory not found or incomplete at {build_path}. Serving frontend will likely fail."
-        )
-        # Return a dummy router if build isn't ready
+        print(f"WARN: Frontend build directory not found at {build_path}.")
         from starlette.routing import Route
-
         async def dummy_frontend(request):
-            return Response(
-                "Frontend not built. Run 'npm run build' in the frontend directory.",
-                media_type="text/plain",
-                status_code=503,
-            )
-
+            return Response("Frontend not built.", media_type="text/plain", status_code=503)
         return Route("/{path:path}", endpoint=dummy_frontend)
 
-    build_dir = pathlib.Path(build_dir)
-
     react = FastAPI(openapi_url="")
-    react.mount(
-        "/assets", StaticFiles(directory=static_files_path), name="static_assets"
-    )
+    react.mount("/assets", StaticFiles(directory=static_files_path), name="static_assets")
 
     @react.get("/{path:path}")
     async def handle_catch_all(request: Request, path: str):
@@ -57,13 +47,7 @@ def create_frontend_router(build_dir="../frontend/dist"):
         if not fp.exists() or not fp.is_file():
             fp = build_path / "index.html"
         return fastapi.responses.FileResponse(fp)
-
     return react
 
-
-# Mount the frontend under /app to not conflict with the LangGraph API routes
-app.mount(
-    "/app",
-    create_frontend_router(),
-    name="frontend",
-)
+# Mount the frontend. It is important to mount it after the API routers.
+app.mount("/", create_frontend_router(), name="frontend")

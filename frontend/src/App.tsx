@@ -1,183 +1,52 @@
-import { useStream } from "@langchain/langgraph-sdk/react";
-import type { Message } from "@langchain/langgraph-sdk";
-import { useState, useEffect, useRef, useCallback } from "react";
-import { ProcessedEvent } from "@/components/ActivityTimeline";
-import { WelcomeScreen } from "@/components/WelcomeScreen";
-import { ChatMessagesView } from "@/components/ChatMessagesView";
+import { Routes, Route, Navigate } from "react-router-dom";
+import { LoginPage } from "./pages/LoginPage";
+import { RegisterPage } from "./pages/RegisterPage";
+import ChatInterface from "./ChatInterface"; // 导入我们刚刚创建的聊天界面
 
-export default function App() {
-  const [processedEventsTimeline, setProcessedEventsTimeline] = useState<
-    ProcessedEvent[]
-  >([]);
-  const [historicalActivities, setHistoricalActivities] = useState<
-    Record<string, ProcessedEvent[]>
-  >({});
-  const scrollAreaRef = useRef<HTMLDivElement>(null);
-  const hasFinalizeEventOccurredRef = useRef(false);
+/**
+ * 这是一个受保护的路由组件。
+ * 它的作用是检查用户是否已登录（通过查看localStorage中是否存在token）。
+ * @param children - 如果用户已登录，则渲染这个子组件（例如聊天主页）。
+ */
+function ProtectedRoute({ children }: { children: JSX.Element }) {
+  const token = localStorage.getItem('accessToken');
 
-  const thread = useStream<{
-    messages: Message[];
-    initial_search_query_count: number;
-    max_research_loops: number;
-    reasoning_model: string;
-  }>({
-    apiUrl: import.meta.env.DEV
-      ? "https://lymneu.dpdns.org"
-      : "http://localhost:8123",
-    assistantId: "agent",
-    messagesKey: "messages",
-    onFinish: (event: any) => {
-      console.log(event);
-    },
-    onUpdateEvent: (event: any) => {
-      let processedEvent: ProcessedEvent | null = null;
-      if (event.generate_query) {
-        processedEvent = {
-          title: "Generating Search Queries",
-          data: event.generate_query.query_list.join(", "),
-        };
-      } else if (event.web_research) {
-        const sources = event.web_research.sources_gathered || [];
-        const numSources = sources.length;
-        const uniqueLabels = [
-          ...new Set(sources.map((s: any) => s.label).filter(Boolean)),
-        ];
-        const exampleLabels = uniqueLabels.slice(0, 3).join(", ");
-        processedEvent = {
-          title: "Web Research",
-          data: `Gathered ${numSources} sources. Related to: ${
-            exampleLabels || "N/A"
-          }.`,
-        };
-      } else if (event.reflection) {
-        processedEvent = {
-          title: "Reflection",
-          data: event.reflection.is_sufficient
-            ? "Search successful, generating final answer."
-            : `Need more information, searching for ${(event.reflection.follow_up_queries || []).join(", ")}`,
-        };
-      } else if (event.finalize_answer) {
-        processedEvent = {
-          title: "Finalizing Answer",
-          data: "Composing and presenting the final answer.",
-        };
-        hasFinalizeEventOccurredRef.current = true;
-      }
-      if (processedEvent) {
-        setProcessedEventsTimeline((prevEvents) => [
-          ...prevEvents,
-          processedEvent!,
-        ]);
-      }
-    },
-  });
+  if (!token) {
+    // 如果在localStorage中找不到token，说明用户未登录，
+    // 我们将他重定向到/login页面。`replace`属性可以防止用户通过后退按钮回到受保护的页面。
+    return <Navigate to="/login" replace />;
+  }
 
-  useEffect(() => {
-    if (scrollAreaRef.current) {
-      const scrollViewport = scrollAreaRef.current.querySelector(
-        "[data-radix-scroll-area-viewport]"
-      );
-      if (scrollViewport) {
-        scrollViewport.scrollTop = scrollViewport.scrollHeight;
-      }
-    }
-  }, [thread.messages]);
-
-  useEffect(() => {
-    if (
-      hasFinalizeEventOccurredRef.current &&
-      !thread.isLoading &&
-      thread.messages.length > 0
-    ) {
-      const lastMessage = thread.messages[thread.messages.length - 1];
-      if (lastMessage && lastMessage.type === "ai" && lastMessage.id) {
-        setHistoricalActivities((prev) => ({
-          ...prev,
-          [lastMessage.id!]: [...processedEventsTimeline],
-        }));
-      }
-      hasFinalizeEventOccurredRef.current = false;
-    }
-  }, [thread.messages, thread.isLoading, processedEventsTimeline]);
-
-  const handleSubmit = useCallback(
-    (submittedInputValue: string, effort: string, model: string) => {
-      if (!submittedInputValue.trim()) return;
-      setProcessedEventsTimeline([]);
-      hasFinalizeEventOccurredRef.current = false;
-
-      // convert effort to, initial_search_query_count and max_research_loops
-      // low means max 1 loop and 1 query
-      // medium means max 3 loops and 3 queries
-      // high means max 10 loops and 5 queries
-      let initial_search_query_count = 0;
-      let max_research_loops = 0;
-      switch (effort) {
-        case "low":
-          initial_search_query_count = 1;
-          max_research_loops = 1;
-          break;
-        case "medium":
-          initial_search_query_count = 3;
-          max_research_loops = 3;
-          break;
-        case "high":
-          initial_search_query_count = 5;
-          max_research_loops = 10;
-          break;
-      }
-
-      const newMessages: Message[] = [
-        ...(thread.messages || []),
-        {
-          type: "human",
-          content: submittedInputValue,
-          id: Date.now().toString(),
-        },
-      ];
-      thread.submit({
-        messages: newMessages,
-        initial_search_query_count: initial_search_query_count,
-        max_research_loops: max_research_loops,
-        reasoning_model: model,
-      });
-    },
-    [thread]
-  );
-
-  const handleCancel = useCallback(() => {
-    thread.stop();
-    window.location.reload();
-  }, [thread]);
-
-  return (
-    <div className="flex h-screen bg-neutral-800 text-neutral-100 font-sans antialiased">
-      <main className="flex-1 flex flex-col overflow-hidden max-w-4xl mx-auto w-full">
-        <div
-          className={`flex-1 overflow-y-auto ${
-            thread.messages.length === 0 ? "flex" : ""
-          }`}
-        >
-          {thread.messages.length === 0 ? (
-            <WelcomeScreen
-              handleSubmit={handleSubmit}
-              isLoading={thread.isLoading}
-              onCancel={handleCancel}
-            />
-          ) : (
-            <ChatMessagesView
-              messages={thread.messages}
-              isLoading={thread.isLoading}
-              scrollAreaRef={scrollAreaRef}
-              onSubmit={handleSubmit}
-              onCancel={handleCancel}
-              liveActivityEvents={processedEventsTimeline}
-              historicalActivities={historicalActivities}
-            />
-          )}
-        </div>
-      </main>
-    </div>
-  );
+  // 如果token存在，就正常渲染子组件。
+  return children;
 }
 
+/**
+ * 这是应用的根组件，现在它的唯一职责就是定义路由规则。
+ */
+export default function App() {
+  return (
+    <Routes>
+      {/* 公开路由：任何人都可以访问 */}
+      <Route path="/login" element={<LoginPage />} />
+      <Route path="/register" element={<RegisterPage />} />
+
+      {/* 受保护的路由：只有登录用户才能访问。
+        我们将ChatInterface组件包裹在ProtectedRoute中。
+      */}
+      <Route
+        path="/"
+        element={
+          <ProtectedRoute>
+            <ChatInterface />
+          </ProtectedRoute>
+        }
+      />
+
+      {/* 这是一个备用/捕获所有路由。如果用户访问了任何未定义的路径，
+        例如 /some/random/path，它会自动将用户重定向回主页 (/)。
+      */}
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}

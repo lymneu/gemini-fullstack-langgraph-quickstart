@@ -1,0 +1,7 @@
+/* We can leverage the variables you defined in your global.css */
+.auth-container {
+  /* Uses the --background variable from your theme */
+  background-color: var(--background);
+}
+
+/* You can add any other custom, non-utility styles here if needed */
